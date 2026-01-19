@@ -1,80 +1,91 @@
+import json
 import datetime
-import re
-from ai_planner import AIPlanner
-from memory import ContextMemory
+from google import genai
+import streamlit as st
 
 class CoachBrain:
     def __init__(self, db):
         self.db = db
-        self.planner = AIPlanner()
-        self.memory = ContextMemory()
+        # Use the secret key
+        try:
+            api_key = st.secrets["GEMINI_API_KEY"]
+        except:
+            api_key = "ERR_NO_KEY"
+            
+        self.client = genai.Client(api_key=api_key)
 
     def process_input(self, user_text):
-        text = user_text.lower()
-        response = ""
+        """
+        1. Analyzes intent.
+        2. Executes tool (Database Log).
+        3. Generates AI response (Personality).
+        """
         
-        # --- 1. PLAN DAY (Uses Memory) ---
-        if "plan" in text:
-            # Get data
-            goals = self.db.get_progress()
-            profile = self.memory.get_context() # <--- Reads the text file
+        # --- STEP 1: TOOL EXECUTION (The "Hands") ---
+        # We check keywords to do the work, but we DON'T return text yet.
+        system_update = ""
+        
+        text_lower = user_text.lower()
+        
+        # LOGGING WORKOUTS
+        if "pull up" in text_lower or "dip" in text_lower or "push up" in text_lower:
+            # Simple number extraction (improved)
+            import re
+            numbers = re.findall(r'\d+', user_text)
+            if numbers:
+                val = float(numbers[0])
+                # Guess the exercise type
+                if "pull" in text_lower: metric = "Pullups"
+                elif "dip" in text_lower: metric = "Dips"
+                elif "push" in text_lower: metric = "Pushups"
+                else: metric = "Workout"
+                
+                self.db.log_metric(metric, val)
+                system_update = f"[System Note: I have successfully logged {val} {metric} into the database.]"
+
+        # LOGGING FOOD
+        elif "ate" in text_lower or "drink" in text_lower or "eggs" in text_lower:
+            self.db.log_food(user_text)
+            system_update = f"[System Note: I have logged this food entry: '{user_text}' into the 'food_logs' tab.]"
             
-            response = "🧠 **Consulting your Profile & Generating Orders...**"
-            
-            # Generate
-            schedule = self.planner.generate_schedule(user_text, goals, profile)
-            
-            if schedule and schedule[0][0] != "Error":
-                self.db.create_schedule(schedule)
-                response = "**📅 PLAN LOCKED.**\nI have tailored this based on your profile history. Check sidebar."
-            else:
-                response = "❌ AI Error. Check API Key."
+        # LOGGING WEIGHT
+        elif "weigh" in text_lower or "kg" in text_lower:
+            import re
+            numbers = re.findall(r'\d+\.?\d*', user_text)
+            if numbers:
+                val = float(numbers[0])
+                self.db.log_metric("Weight", val)
+                system_update = f"[System Note: I logged their weight as {val}kg.]"
 
-        # --- 2. REVIEW DAY (Updates Memory) ---
-        elif "review day" in text or "end day" in text:
-            # Gather data
-            logs = self.db.get_progress() # What you did
-            history = self.db.get_chat_history(10) # What you said
-            
-            response = "💾 **Analyzing performance... Updating Profile...**"
-            
-            # Update the text file
-            success = self.memory.update_profile(str(logs), str(history))
-            
-            if success:
-                response = "**✅ Profile Updated.**\nI have noted your performance. I will use this to adjust tomorrow's plan.\n*Go to sleep.*"
-            else:
-                response = "❌ Failed to update memory."
-
-        # --- 3. STATUS / DONE (Standard) ---
-        elif "status" in text or "next" in text:
-            mission = self.db.get_current_mission()
-            if mission:
-                _, time, task = mission
-                response = f"**🎯 CURRENT MISSION ({time})**\n{task}"
-            else:
-                response = "No active missions."
-
-        elif "done" in text:
-            mission = self.db.get_current_mission()
-            if mission:
-                self.db.mark_mission_done(mission[0])
-                response = "✅ **Task Complete.** Type 'Status' for next."
-            else:
-                response = "No task to complete."
-
-        # --- 4. LOGGING (Standard) ---
-        elif any(k in text for k in ["did", "ate", "swam", "solved"]):
-            # (Simplified logging logic for brevity - paste your previous Regex here if needed)
-            # For now, just a pass-through to show it works
-            response = self._handle_logging(text)
-
-        else:
-            response = "Commands: **'Plan my day'**, **'Review day'**, **'Done'**, or **'Did 15 pullups'**."
-
-        return response
-
-    def _handle_logging(self, text):
-        # ... (Reuse the Regex logging logic from previous code) ...
-        # For simplicity in this snippet:
-        return "📝 Logged activity. (Remember to 'Review Day' tonight!)"
+        # --- STEP 2: AI GENERATION (The "Voice") ---
+        # Now we send the User's text + Our System Note to Gemini
+        
+        context = self.db.get_progress() # Get stats for context
+        now = datetime.datetime.now().strftime("%H:%M")
+        
+        prompt = f"""
+        You are a high-performance discipline coach.
+        
+        CONTEXT:
+        - Time: {now}
+        - Recent Stats: {context}
+        - SYSTEM UPDATE: {system_update} (This is what you just did in the backend)
+        
+        USER SAID: "{user_text}"
+        
+        YOUR GOAL:
+        Reply to the user naturally. 
+        - If the System Update says you logged something, confirm it casually (e.g., "Got it, 7 eggs logged. That's good protein.").
+        - Do NOT say "System Note" or "I have logged". Be human.
+        - If the user asks a question (like "Where did you log it?"), answer truthfully based on the System Update.
+        - Keep it short (1-2 sentences).
+        """
+        
+        try:
+            response = self.client.models.generate_content(
+                model='gemini-2.0-flash', # Or gemini-1.5-flash
+                contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            return f"⚠️ Brain Freeze: {e}"
