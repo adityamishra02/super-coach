@@ -84,6 +84,17 @@ with st.sidebar:
         except Exception as e:
             st.error(f"❌ DATABASE ERROR: {e}")
             st.write("Double check: Is the Service Account Email added as EDITOR in the Google Sheet?")
+    st.divider()
+    st.subheader("🔧 Diagnostics")
+    if st.button("🔴 Test Food Log Specifically"):
+        try:
+            st.write("Targeting 'food_logs' tab...")
+            # 1. Check if tab exists
+            db.ws_food.append_row(["TEST_DATE", "TEST_TIME", "Connection Verified"])
+            st.success("✅ Success! Check your Google Sheet 'food_logs' tab now.")
+        except Exception as e:
+            st.error(f"❌ WRITE FAILED: {e}")
+            st.write("Possible fix: Check if tab name is exactly 'food_logs' (lowercase).")
 
 # ==========================================
 # MODE 1: COMMANDER (Chat)
