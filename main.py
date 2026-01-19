@@ -7,8 +7,6 @@ from brain import CoachBrain
 
 # --- CONFIG ---
 st.set_page_config(page_title="Aditya's HQ", page_icon="⚡", layout="wide")
-db = CoachDB()
-brain = CoachBrain(db)
 
 # CSS Styling
 st.markdown("""
@@ -20,34 +18,40 @@ st.markdown("""
         padding: 10px; 
         color: black !important; 
     }
-    /* Critical Alert Style */
-    .weight-alert {
-        padding: 20px;
-        background-color: #ff4b4b;
-        color: white;
-        border-radius: 10px;
-        margin-bottom: 20px;
-        font-weight: bold;
+    /* Morning Protocol Alert */
+    div[data-testid="stNotification"] {
+        border-left: 5px solid #ff4b4b;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- MORNING PROTOCOL (THE GATEKEEPER) ---
+# Initialize
+db = CoachDB()
+brain = CoachBrain(db)
+
+# ==========================================
+# 🛑 MORNING PROTOCOL (THE GATEKEEPER)
+# ==========================================
 if not db.is_weight_logged_today():
-    with st.container():
-        st.error("⚠️ MORNING PROTOCOL INCOMPLETE")
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.write("### ⚖️ Weigh-in Required")
-            st.write("You cannot proceed to swimming or planning without logging weight.")
-        with col2:
-            weight = st.number_input("Current Weight (kg)", min_value=50.0, max_value=100.0, step=0.1)
-            if st.button("LOG WEIGHT"):
-                db.log_metric("Weight", weight)
-                st.success("Weight logged. Reloading...")
-                time.sleep(1)
-                st.rerun()
-    st.divider()
+    st.title("⚠️ Morning Protocol")
+    st.error("You cannot access the dashboard until you log your weight.")
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        weight_input = st.number_input("Current Weight (kg)", min_value=50.0, max_value=120.0, step=0.1)
+    
+    if st.button("LOG WEIGHT & UNLOCK 🔓", type="primary"):
+        with st.spinner("Logging..."):
+            db.log_metric("Weight", weight_input)
+            st.success("Weight logged. Unlocking system...")
+            time.sleep(1)
+            st.rerun()
+            
+    st.stop() # <--- This stops the rest of the app from loading!
+
+# ==========================================
+# 🚀 MAIN APP (Only loads if weight is logged)
+# ==========================================
 
 # --- NAVIGATION ---
 with st.sidebar:
@@ -55,9 +59,7 @@ with st.sidebar:
     mode = st.radio("Mode", ["🤖 Commander", "📊 Dashboard", "📜 History"])
     st.divider()
 
-# ==========================================
 # MODE 1: COMMANDER (Chat)
-# ==========================================
 if mode == "🤖 Commander":
     with st.sidebar:
         st.subheader("📅 Orders")
@@ -107,13 +109,11 @@ if mode == "🤖 Commander":
         db.log_chat("assistant", response)
         st.rerun()
 
-# ==========================================
 # MODE 2: DASHBOARD
-# ==========================================
 elif mode == "📊 Dashboard":
     st.title("📊 Performance Analytics")
     
-    # Consistency
+    # Consistency Heatmap
     st.subheader("🔥 Consistency Streak")
     cons_data = db.get_consistency_data()
     if cons_data:
@@ -129,7 +129,7 @@ elif mode == "📊 Dashboard":
 
     st.divider()
     
-    # Trends
+    # Metric Trends
     st.subheader("📈 Metric Trends")
     all_goals = db.get_all_goal_names()
     metric = st.selectbox("Select Metric:", all_goals)
@@ -143,9 +143,7 @@ elif mode == "📊 Dashboard":
             ).properties(height=400)
             st.altair_chart(chart, use_container_width=True)
 
-# ==========================================
-# MODE 3: HISTORY (The Logbook)
-# ==========================================
+# MODE 3: HISTORY
 elif mode == "📜 History":
     st.title("📜 Raw Logbook")
     
@@ -153,26 +151,32 @@ elif mode == "📜 History":
     if raw_data:
         df = pd.DataFrame(raw_data)
         
-        # Add filters
+        # Filter Options
         col1, col2 = st.columns(2)
         with col1:
-            filter_metric = st.multiselect("Filter by Metric", df['goal_name'].unique())
+            # Get unique goal names for the filter
+            options = df['goal_name'].unique().tolist()
+            selected_metrics = st.multiselect("Filter by Metric", options)
         
-        if filter_metric:
-            df = df[df['goal_name'].isin(filter_metric)]
+        # Apply Filter
+        if selected_metrics:
+            df = df[df['goal_name'].isin(selected_metrics)]
             
-        # Sort by date descending (newest first)
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values(by='date', ascending=False)
-        
-        st.dataframe(
-            df, 
-            use_container_width=True,
-            column_config={
-                "date": st.column_config.DateColumn("Date", format="DD MMM YYYY"),
-                "value": st.column_config.NumberColumn("Value"),
-                "rpe": "RPE (Intensity)"
-            }
-        )
+        # Sort by Date (Newest First)
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values(by='date', ascending=False)
+            
+            # Display Table
+            st.dataframe(
+                df, 
+                use_container_width=True,
+                column_config={
+                    "date": st.column_config.DateColumn("Date", format="DD MMM YYYY"),
+                    "value": st.column_config.NumberColumn("Value"),
+                    "rpe": "RPE / Notes"
+                },
+                hide_index=True
+            )
     else:
-        st.info("No logs found.")
+        st.info("No logs found yet.")
