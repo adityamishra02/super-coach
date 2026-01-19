@@ -11,12 +11,25 @@ st.set_page_config(page_title="Aditya's HQ", page_icon="⚡", layout="wide")
 # CSS Styling
 st.markdown("""
 <style>
+    /* Make the Progress Bar Green */
     .stProgress > div > div > div > div { background-color: #00FF00; }
-    .stChatMessage { 
+    
+    /* MORNING CHECKLIST NUDGE (Yellow Box) */
+    div[data-testid="stNotification"] {
+        border-left: 5px solid #ff4b4b;
+    }
+
+    /* CHAT BUBBLES - FORCE BLACK TEXT */
+    [data-testid="stChatMessage"] { 
         background-color: #f0f2f6; 
         border-radius: 10px; 
         padding: 10px; 
-        color: black !important; 
+        border: 1px solid #d0d0d0;
+    }
+
+    /* The "*" means: Target EVERY piece of text inside the bubble */
+    [data-testid="stChatMessage"] * {
+        color: #000000 !important;
     }
 </style>
 """, unsafe_allow_html=True)
