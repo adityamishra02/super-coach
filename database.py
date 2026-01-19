@@ -1,120 +1,159 @@
-import sqlite3
+import streamlit as st
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import datetime
+import pandas as pd
 
 class CoachDB:
-    def __init__(self, db_name="super_coach.db"):
-        self.conn = sqlite3.connect(db_name, check_same_thread=False)
-        self.cursor = self.conn.cursor()
-        self._init_db()
-
-    def _init_db(self):
-        # 1. GOALS
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS goals
-                             (name TEXT PRIMARY KEY, target REAL, unit TEXT, category TEXT)''')
+    def __init__(self):
+        # Authenticate using Streamlit Secrets
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # 2. DAILY LOGS
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS daily_entries
-                             (date TEXT, goal_name TEXT, value REAL, rpe INTEGER, 
-                              PRIMARY KEY (date, goal_name))''')
-
-        # 3. FOOD LOGS
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS food_logs
-                             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                              date TEXT, time TEXT, content TEXT)''')
+        # We create a credentials dict from the secrets
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        # Fix private key formatting if necessary
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
-        # 4. CHAT HISTORY
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS chat_history
-                             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                              timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                              sender TEXT, message TEXT)''')
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        self.client = gspread.authorize(creds)
+        
+        # Open the Sheet
+        try:
+            self.sheet = self.client.open("super_coach_db")
+        except:
+            st.error("❌ Could not find 'super_coach_db' in Google Sheets. Did you share it with the service account email?")
+            st.stop()
 
-        # 5. SCHEDULE
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS schedule
-                             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                              date TEXT, 
-                              time_slot TEXT, 
-                              task TEXT, 
-                              status TEXT)''')
+        # Connect to Tabs
+        self.ws_goals = self.sheet.worksheet("goals")
+        self.ws_entries = self.sheet.worksheet("daily_entries")
+        self.ws_food = self.sheet.worksheet("food_logs")
+        self.ws_chat = self.sheet.worksheet("chat_history")
+        self.ws_schedule = self.sheet.worksheet("schedule")
 
-        # Seed Defaults
-        self.cursor.execute("SELECT count(*) FROM goals")
-        if self.cursor.fetchone()[0] == 0:
-            defaults = [
-                ("Pullups", 15, "reps", "Athleticism"),
-                ("Dips", 20, "reps", "Athleticism"),
-                ("DSA", 3, "problems", "Career"),
-                ("Job Apps", 5, "apps", "Career"),
-                ("Sleep", 8, "hours", "Recovery")
-            ]
-            self.cursor.executemany("INSERT INTO goals VALUES (?,?,?,?)", defaults)
-            self.conn.commit()
-
-    # --- METHODS ---
+    # --- SCHEDULE METHODS ---
     def create_schedule(self, tasks):
+        # tasks = [("08:00", "Wake Up"), ...]
         today = datetime.date.today().isoformat()
-        self.cursor.execute("DELETE FROM schedule WHERE date = ?", (today,))
+        
+        # 1. Get all records
+        all_rows = self.ws_schedule.get_all_records()
+        
+        # 2. Delete old rows for today (This is slow in Sheets, so we just append and filter later, 
+        #    OR we clear the sheet if you only care about today. Let's append but mark old as 'ARCHIVED'?)
+        #    Actually, simplest for a personal app: Clear the schedule tab daily or keep history?
+        #    Let's KEEP history but only fetch today's.
+        
+        # Prepare rows
+        new_rows = []
         for time_slot, task in tasks:
-            self.cursor.execute("INSERT INTO schedule (date, time_slot, task, status) VALUES (?,?,?,?)", 
-                                (today, time_slot, task, "PENDING"))
-        self.conn.commit()
+            new_rows.append([today, time_slot, task, "PENDING"])
+            
+        self.ws_schedule.append_rows(new_rows)
 
     def get_current_mission(self):
         today = datetime.date.today().isoformat()
-        self.cursor.execute("SELECT id, time_slot, task FROM schedule WHERE date = ? AND status = 'PENDING' ORDER BY time_slot ASC LIMIT 1", (today,))
-        return self.cursor.fetchone()
+        records = self.ws_schedule.get_all_records()
+        
+        # Filter for Today + Pending
+        # We assume the records are dictionaries: {'date': '...', 'status': '...'}
+        for i, row in enumerate(records):
+            if str(row['date']) == today and row['status'] == "PENDING":
+                # Return (row_index_in_sheet, time, task)
+                # Sheet rows start at 2 (1 is header). i is 0-indexed from records.
+                # So actual row number is i + 2
+                return (i + 2, row['time_slot'], row['task'])
+        return None
 
-    def mark_mission_done(self, task_id):
-        self.cursor.execute("UPDATE schedule SET status = 'DONE' WHERE id = ?", (task_id,))
-        self.conn.commit()
+    def mark_mission_done(self, row_id):
+        # Update column D (Status) to DONE
+        self.ws_schedule.update_cell(row_id, 4, "DONE")
         
     def get_full_schedule(self):
         today = datetime.date.today().isoformat()
-        self.cursor.execute("SELECT time_slot, task, status FROM schedule WHERE date = ? ORDER BY time_slot ASC", (today,))
-        return self.cursor.fetchall()
+        records = self.ws_schedule.get_all_records()
+        
+        # Filter for today
+        todays_plan = []
+        for row in records:
+            if str(row['date']) == today:
+                todays_plan.append((row['time_slot'], row['task'], row['status']))
+        
+        # Sort by time
+        todays_plan.sort(key=lambda x: x[0])
+        return todays_plan
 
+    # --- LOGGING METHODS ---
     def log_metric(self, name, value, rpe=None):
         today = datetime.date.today().isoformat()
-        self.cursor.execute("INSERT OR REPLACE INTO daily_entries (date, goal_name, value, rpe) VALUES (?,?,?,?)", 
-                            (today, name, value, rpe))
-        self.conn.commit()
+        # Append row: date, goal_name, value, rpe
+        self.ws_entries.append_row([today, name, value, rpe if rpe else ""])
 
     def log_food(self, content):
         today = datetime.date.today().isoformat()
         now = datetime.datetime.now().strftime("%H:%M")
-        self.cursor.execute("INSERT INTO food_logs (date, time, content) VALUES (?,?,?)", (today, now, content))
-        self.conn.commit()
+        self.ws_food.append_row([today, now, content])
 
     def log_chat(self, sender, message):
-        self.cursor.execute("INSERT INTO chat_history (sender, message) VALUES (?,?)", (sender, message))
-        self.conn.commit()
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.ws_chat.append_row([now, sender, message])
         
-    def get_chat_history(self, limit=50):
-        self.cursor.execute("SELECT sender, message FROM chat_history ORDER BY id DESC LIMIT ?", (limit,))
-        return self.cursor.fetchall()[::-1]
+    def get_chat_history(self, limit=20):
+        # Get all values
+        all_values = self.ws_chat.get_all_values()
+        # Skip header, get last 'limit' rows
+        if len(all_values) < 2: return []
+        
+        data = all_values[1:] # Remove header
+        recent = data[-limit:] # Last N
+        
+        # Format: [(sender, msg), ...]
+        return [(r[1], r[2]) for r in recent]
 
     def get_progress(self):
         today = datetime.date.today().isoformat()
-        query = '''
-            SELECT g.name, g.target, g.unit, COALESCE(d.value, 0), d.rpe
-            FROM goals g
-            LEFT JOIN daily_entries d ON g.name = d.goal_name AND d.date = ?
-        '''
-        self.cursor.execute(query, (today,))
-        return self.cursor.fetchall()
-    
+        
+        # 1. Get Goals
+        goals = self.ws_goals.get_all_records() # [{'name': 'Pullups', 'target': 15...}]
+        
+        # 2. Get Today's Entries
+        entries = self.ws_entries.get_all_records()
+        
+        # 3. Aggregate
+        progress = []
+        for g in goals:
+            g_name = g['name']
+            total = 0
+            last_rpe = None
+            
+            for e in entries:
+                if str(e['date']) == today and e['goal_name'] == g_name:
+                    total += float(e['value'])
+                    if e['rpe']: last_rpe = e['rpe']
+            
+            progress.append((g_name, g['target'], g['unit'], total, last_rpe))
+            
+        return progress
+
+    # --- DASHBOARD METHODS ---
     def get_metric_history(self, goal_name):
-        # Returns [('2023-10-01', 12), ('2023-10-02', 13)...]
-        self.cursor.execute('''SELECT date, value FROM daily_entries 
-                             WHERE goal_name = ? ORDER BY date ASC''', (goal_name,))
-        return self.cursor.fetchall()
+        records = self.ws_entries.get_all_records()
+        # Filter
+        data = []
+        for r in records:
+            if r['goal_name'] == goal_name:
+                data.append((r['date'], float(r['value'])))
+        return data
 
     def get_all_goal_names(self):
-        # Returns list of all goals ever logged or tracked
-        self.cursor.execute("SELECT DISTINCT name FROM goals")
-        return [row[0] for row in self.cursor.fetchall()]
+        goals = self.ws_goals.get_all_records()
+        return [g['name'] for g in goals]
 
     def get_consistency_data(self):
-        # Returns count of tasks completed per day: [('2023-10-01', 5), ...]
-        self.cursor.execute('''SELECT date, COUNT(*) FROM daily_entries 
-                             GROUP BY date ORDER BY date ASC''')
-        return self.cursor.fetchall()
+        records = self.ws_entries.get_all_records()
+        # Count entries per date
+        counts = {}
+        for r in records:
+            d = r['date']
+            counts[d] = counts.get(d, 0) + 1
+        return list(counts.items())
