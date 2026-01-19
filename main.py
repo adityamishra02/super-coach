@@ -64,6 +64,27 @@ with st.sidebar:
     mode = st.radio("Mode", ["🤖 Commander", "📊 Dashboard", "📜 History"])
     st.divider()
 
+    st.divider()
+    st.subheader("🔧 Diagnostics")
+    if st.button("🔴 Test Database Connection"):
+        try:
+            # 1. Try to READ
+            st.write("1. Attempting to READ...")
+            test_read = db.ws_entries.cell(1, 1).value
+            st.success(f"✅ Read Success! (A1 = '{test_read}')")
+            
+            # 2. Try to WRITE
+            st.write("2. Attempting to WRITE...")
+            import datetime
+            now = datetime.datetime.now().strftime("%H:%M:%S")
+            # Appending to 'chat_history' is safest for testing
+            db.ws_chat.append_row([now, "SYSTEM", "Test Connection Successful"])
+            st.success(f"✅ Write Success! Added row at {now}")
+            
+        except Exception as e:
+            st.error(f"❌ DATABASE ERROR: {e}")
+            st.write("Double check: Is the Service Account Email added as EDITOR in the Google Sheet?")
+
 # ==========================================
 # MODE 1: COMMANDER (Chat)
 # ==========================================
