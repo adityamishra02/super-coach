@@ -33,18 +33,15 @@ class CoachDB:
 
     # --- SCHEDULE METHODS ---
     def create_schedule(self, tasks):
-        # tasks = [("08:00", "Wake Up"), ...]
-        today = datetime.date.today().isoformat()
+        # Set Date to India Time
+        import pytz # Import inside function or at top
+        ist = pytz.timezone('Asia/Kolkata')
+        today = datetime.datetime.now(ist).date().isoformat()
         
-        # 1. Get all records
-        all_rows = self.ws_schedule.get_all_records()
+        # 1. Clear old schedule (Optional: or just append)
+        # For a simple app, let's just Append. 
+        # Ideally, you'd clear today's previous entries, but appending is safer for now.
         
-        # 2. Delete old rows for today (This is slow in Sheets, so we just append and filter later, 
-        #    OR we clear the sheet if you only care about today. Let's append but mark old as 'ARCHIVED'?)
-        #    Actually, simplest for a personal app: Clear the schedule tab daily or keep history?
-        #    Let's KEEP history but only fetch today's.
-        
-        # Prepare rows
         new_rows = []
         for time_slot, task in tasks:
             new_rows.append([today, time_slot, task, "PENDING"])
