@@ -18,10 +18,6 @@ st.markdown("""
         padding: 10px; 
         color: black !important; 
     }
-    /* Morning Protocol Alert */
-    div[data-testid="stNotification"] {
-        border-left: 5px solid #ff4b4b;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -29,37 +25,35 @@ st.markdown("""
 db = CoachDB()
 brain = CoachBrain(db)
 
-# ==========================================
-# 🛑 MORNING PROTOCOL (THE GATEKEEPER)
-# ==========================================
-if not db.is_weight_logged_today():
-    st.title("⚠️ Morning Protocol")
-    st.error("You cannot access the dashboard until you log your weight.")
-    
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        weight_input = st.number_input("Current Weight (kg)", min_value=50.0, max_value=120.0, step=0.1)
-    
-    if st.button("LOG WEIGHT & UNLOCK 🔓", type="primary"):
-        with st.spinner("Logging..."):
-            db.log_metric("Weight", weight_input)
-            st.success("Weight logged. Unlocking system...")
-            time.sleep(1)
-            st.rerun()
-            
-    st.stop() # <--- This stops the rest of the app from loading!
-
-# ==========================================
-# 🚀 MAIN APP (Only loads if weight is logged)
-# ==========================================
-
-# --- NAVIGATION ---
+# --- SIDEBAR (NAVIGATION & REMINDERS) ---
 with st.sidebar:
     st.title("⚡ SUPER COACH")
+    
+    # 🚨 MORNING CHECKLIST (The Non-Blocking Nudge) 🚨
+    st.divider()
+    if not db.is_weight_logged_today():
+        st.warning("⚠️ WEIGHT NOT LOGGED")
+        st.caption("Please log before swimming.")
+        
+        # Simple Input in Sidebar
+        w = st.number_input("Weight (kg)", min_value=50.0, max_value=120.0, step=0.1, key="weight_sidebar")
+        if st.button("Log Weight", key="btn_weight_sidebar"):
+            db.log_metric("Weight", w)
+            st.success("Logged!")
+            time.sleep(1)
+            st.rerun()
+    else:
+        st.success("✅ Weight Logged Today")
+        
+    st.divider()
+    
+    # Mode Selection
     mode = st.radio("Mode", ["🤖 Commander", "📊 Dashboard", "📜 History"])
     st.divider()
 
+# ==========================================
 # MODE 1: COMMANDER (Chat)
+# ==========================================
 if mode == "🤖 Commander":
     with st.sidebar:
         st.subheader("📅 Orders")
@@ -109,7 +103,9 @@ if mode == "🤖 Commander":
         db.log_chat("assistant", response)
         st.rerun()
 
+# ==========================================
 # MODE 2: DASHBOARD
+# ==========================================
 elif mode == "📊 Dashboard":
     st.title("📊 Performance Analytics")
     
@@ -143,7 +139,9 @@ elif mode == "📊 Dashboard":
             ).properties(height=400)
             st.altair_chart(chart, use_container_width=True)
 
+# ==========================================
 # MODE 3: HISTORY
+# ==========================================
 elif mode == "📜 History":
     st.title("📜 Raw Logbook")
     
@@ -151,7 +149,6 @@ elif mode == "📜 History":
     if raw_data:
         df = pd.DataFrame(raw_data)
         
-        # Filter Options
         col1, col2 = st.columns(2)
         with col1:
             # Get unique goal names for the filter
@@ -167,7 +164,6 @@ elif mode == "📜 History":
             df['date'] = pd.to_datetime(df['date'])
             df = df.sort_values(by='date', ascending=False)
             
-            # Display Table
             st.dataframe(
                 df, 
                 use_container_width=True,
