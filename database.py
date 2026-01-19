@@ -114,11 +114,16 @@ class CoachDB:
         today = datetime.date.today().isoformat()
         
         # 1. Get Goals
-        goals = self.ws_goals.get_all_records() # [{'name': 'Pullups', 'target': 15...}]
+        goals = self.ws_goals.get_all_records()
         
         # 2. Get Today's Entries
         entries = self.ws_entries.get_all_records()
         
+        # --- DEBUG PRINT (This will show up in your terminal logs) ---
+        if entries:
+            print(f"DEBUG: Found keys in first row: {entries[0].keys()}")
+        # ------------------------------------------------------------
+
         # 3. Aggregate
         progress = []
         for g in goals:
@@ -127,9 +132,24 @@ class CoachDB:
             last_rpe = None
             
             for e in entries:
-                if str(e['date']) == today and e['goal_name'] == g_name:
-                    total += float(e['value'])
-                    if e['rpe']: last_rpe = e['rpe']
+                # Normalize keys: strip spaces and lowercase them just for checking
+                # (This fixes 'Value', 'value ', 'Goal Name', etc.)
+                row = {k.lower().strip(): v for k, v in e.items()}
+                
+                # Check date
+                row_date = str(row.get('date', ''))
+                row_goal = row.get('goal_name', '')
+                
+                if row_date == today and row_goal == g_name:
+                    try:
+                        # Safer fetch: defaults to 0 if empty or missing
+                        val = row.get('value', 0)
+                        total += float(val) if val != "" else 0.0
+                        
+                        if row.get('rpe'): 
+                            last_rpe = row.get('rpe')
+                    except ValueError:
+                        continue # Skip bad numbers
             
             progress.append((g_name, g['target'], g['unit'], total, last_rpe))
             
