@@ -13,8 +13,16 @@ brain = CoachBrain(db)
 # CSS
 st.markdown("""
 <style>
+    /* Make the Progress Bar Green */
     .stProgress > div > div > div > div { background-color: #00FF00; }
-    .stChatMessage { background-color: #f0f2f6; border-radius: 10px; padding: 10px; }
+    
+    /* Fix Chat Bubbles: Light Background + BLACK Text */
+    .stChatMessage { 
+        background-color: #f0f2f6; 
+        border-radius: 10px; 
+        padding: 10px; 
+        color: black !important; /* Forces text to be black */
+    }
 </style>
 """, unsafe_allow_html=True)
 
