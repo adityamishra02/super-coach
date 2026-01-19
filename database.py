@@ -157,3 +157,16 @@ class CoachDB:
             d = r['date']
             counts[d] = counts.get(d, 0) + 1
         return list(counts.items())
+    
+    def is_weight_logged_today(self):
+        today = datetime.date.today().isoformat()
+        entries = self.ws_entries.get_all_records()
+        for e in entries:
+            # Check if date matches AND goal_name is "Weight"
+            if str(e['date']) == today and e['goal_name'] == "Weight":
+                return True
+        return False
+
+    def get_raw_history(self):
+        # Returns all data for the history page
+        return self.ws_entries.get_all_records()

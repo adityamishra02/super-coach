@@ -10,33 +10,55 @@ st.set_page_config(page_title="Aditya's HQ", page_icon="⚡", layout="wide")
 db = CoachDB()
 brain = CoachBrain(db)
 
-# CSS
+# CSS Styling
 st.markdown("""
 <style>
-    /* Make the Progress Bar Green */
     .stProgress > div > div > div > div { background-color: #00FF00; }
-    
-    /* Fix Chat Bubbles: Light Background + BLACK Text */
     .stChatMessage { 
         background-color: #f0f2f6; 
         border-radius: 10px; 
         padding: 10px; 
-        color: black !important; /* Forces text to be black */
+        color: black !important; 
+    }
+    /* Critical Alert Style */
+    .weight-alert {
+        padding: 20px;
+        background-color: #ff4b4b;
+        color: white;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# --- MORNING PROTOCOL (THE GATEKEEPER) ---
+if not db.is_weight_logged_today():
+    with st.container():
+        st.error("⚠️ MORNING PROTOCOL INCOMPLETE")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.write("### ⚖️ Weigh-in Required")
+            st.write("You cannot proceed to swimming or planning without logging weight.")
+        with col2:
+            weight = st.number_input("Current Weight (kg)", min_value=50.0, max_value=100.0, step=0.1)
+            if st.button("LOG WEIGHT"):
+                db.log_metric("Weight", weight)
+                st.success("Weight logged. Reloading...")
+                time.sleep(1)
+                st.rerun()
+    st.divider()
+
 # --- NAVIGATION ---
 with st.sidebar:
     st.title("⚡ SUPER COACH")
-    mode = st.radio("Mode", ["🤖 Commander", "📊 Dashboard"])
+    mode = st.radio("Mode", ["🤖 Commander", "📊 Dashboard", "📜 History"])
     st.divider()
 
 # ==========================================
-# MODE 1: COMMANDER (Chat & Daily Plan)
+# MODE 1: COMMANDER (Chat)
 # ==========================================
 if mode == "🤖 Commander":
-    # (This is your existing Chat/Schedule code)
     with st.sidebar:
         st.subheader("📅 Orders")
         schedule = db.get_full_schedule()
@@ -55,10 +77,10 @@ if mode == "🤖 Commander":
         st.subheader("📊 Today's Stats")
         stats = db.get_progress()
         for name, target, unit, value, rpe in stats:
-            pct = min(value / target, 1.0)
+            pct = min(value / target, 1.0) if target > 0 else 0
             st.write(f"**{name}**")
             st.progress(pct)
-            st.caption(f"{int(value)}/{int(target)} {unit}")
+            st.caption(f"{float(value)}/{int(target)} {unit}")
 
     # Chat Interface
     st.header("🤖 Coach Uplink")
@@ -79,10 +101,6 @@ if mode == "🤖 Commander":
         db.log_chat("user", prompt)
 
         response = brain.process_input(prompt)
-        
-        with st.spinner("Processing..."):
-            time.sleep(0.3)
-            
         st.session_state.messages.append({"role": "assistant", "content": response})
         with st.chat_message("assistant"):
             st.markdown(response)
@@ -90,59 +108,71 @@ if mode == "🤖 Commander":
         st.rerun()
 
 # ==========================================
-# MODE 2: DASHBOARD (Visuals)
+# MODE 2: DASHBOARD
 # ==========================================
 elif mode == "📊 Dashboard":
     st.title("📊 Performance Analytics")
-
-    # 1. CONSISTENCY HEATMAP (The "Green Dots")
-    st.subheader("🔥 Consistency Streak")
     
+    # Consistency
+    st.subheader("🔥 Consistency Streak")
     cons_data = db.get_consistency_data()
     if cons_data:
         df_cons = pd.DataFrame(cons_data, columns=['date', 'count'])
         df_cons['date'] = pd.to_datetime(df_cons['date'])
-        
-        # Create a GitHub-style Heatmap using Altair
         heatmap = alt.Chart(df_cons).mark_rect().encode(
             x=alt.X('date:O', timeUnit='yearmonthdate', title='Date'),
-            y=alt.Y('count:Q', title='Tasks Completed'),
+            y=alt.Y('count:Q', title='Tasks'),
             color=alt.Color('count:Q', scale=alt.Scale(scheme='greens'), legend=None),
             tooltip=['date', 'count']
         ).properties(width=700, height=150)
-        
         st.altair_chart(heatmap, use_container_width=True)
-    else:
-        st.info("No data yet. Start logging tasks to see your streak!")
 
     st.divider()
-
-    # 2. PROGRESS CHARTS (Line Charts)
+    
+    # Trends
     st.subheader("📈 Metric Trends")
-    
-    # Dropdown to select metric
     all_goals = db.get_all_goal_names()
-    metric = st.selectbox("Select Metric to View:", all_goals, index=0 if all_goals else None)
-    
+    metric = st.selectbox("Select Metric:", all_goals)
     if metric:
         history = db.get_metric_history(metric)
         if history:
             df_hist = pd.DataFrame(history, columns=['date', 'value'])
             df_hist['date'] = pd.to_datetime(df_hist['date'])
-            
-            # Interactive Line Chart
             chart = alt.Chart(df_hist).mark_line(point=True).encode(
-                x='date:T',
-                y=alt.Y('value:Q', title=metric),
-                tooltip=['date', 'value']
+                x='date:T', y='value:Q', tooltip=['date', 'value']
             ).properties(height=400)
-            
             st.altair_chart(chart, use_container_width=True)
+
+# ==========================================
+# MODE 3: HISTORY (The Logbook)
+# ==========================================
+elif mode == "📜 History":
+    st.title("📜 Raw Logbook")
+    
+    raw_data = db.get_raw_history()
+    if raw_data:
+        df = pd.DataFrame(raw_data)
+        
+        # Add filters
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_metric = st.multiselect("Filter by Metric", df['goal_name'].unique())
+        
+        if filter_metric:
+            df = df[df['goal_name'].isin(filter_metric)]
             
-            # Simple Stat
-            avg_val = df_hist['value'].mean()
-            max_val = df_hist['value'].max()
-            st.caption(f"**Stats for {metric}:** Max: {max_val} | Average: {avg_val:.1f}")
-            
-        else:
-            st.warning(f"No history found for {metric}. Log some data first!")
+        # Sort by date descending (newest first)
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values(by='date', ascending=False)
+        
+        st.dataframe(
+            df, 
+            use_container_width=True,
+            column_config={
+                "date": st.column_config.DateColumn("Date", format="DD MMM YYYY"),
+                "value": st.column_config.NumberColumn("Value"),
+                "rpe": "RPE (Intensity)"
+            }
+        )
+    else:
+        st.info("No logs found.")
